@@ -44,8 +44,8 @@ app.use(
   cors({
     origin: [
       "http://localhost:3000",
-      "http://das-rps-backend.onrender.com",
-      "https://das-rps-backend.onrender.com",
+      "http://das-rps-frontend.onrender.com",
+      "https://das-rps-frontend.onrender.com",
     ],
     credentials: true,
   })
