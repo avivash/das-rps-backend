@@ -1,15 +1,22 @@
-import {Attestation, Game, PrismaClient} from "@prisma/client";
-import {AttestationShareablePackageObject, ZERO_ADDRESS, ZERO_BYTES32} from "@ethereum-attestation-service/eas-sdk";
-import {GameWithPlayers, GameWithPlayersAndAttestations, LeaderboardPlayer} from "./types";
-import {updateNode} from "./graph";
-import {UndirectedGraph} from "graphology";
+import { Attestation, Game, PrismaClient } from "@prisma/client";
+import {
+  AttestationShareablePackageObject,
+  ZERO_ADDRESS,
+  ZERO_BYTES32,
+} from "@ethereum-attestation-service/eas-sdk";
+import {
+  GameWithPlayers,
+  GameWithPlayersAndAttestations,
+  LeaderboardPlayer,
+} from "./types";
+import { updateNode } from "./graph";
+import { UndirectedGraph } from "graphology";
 import dayjs from "dayjs";
-import {EAS, SchemaEncoder} from "@ethereum-attestation-service/eas-sdk";
-import {ethers} from "ethers";
+import { EAS, SchemaEncoder } from "@ethereum-attestation-service/eas-sdk";
+import { ethers } from "ethers";
 import axios from "axios";
-import {AvatarResolver} from '@ensdomains/ens-avatar';
-import {CURRENT_CONFIG} from "./verifyAttestation";
-
+import { AvatarResolver } from "@ensdomains/ens-avatar";
+import { CURRENT_CONFIG } from "./verifyAttestation";
 
 const prisma = new PrismaClient();
 
@@ -21,7 +28,7 @@ export const CUSTOM_SCHEMAS = {
   DECLINE_GAME_CHALLENGE:
     "0x27e160d185f1d97202897bd3ed697906398b70a8d08b0d22bc2cfffdf561e3e9",
   FINALIZE_GAME:
-    "0x74421276d2c56437784aec6f2ede7d837c2196897b16c0c73fa84865ce9ee565"
+    "0x74421276d2c56437784aec6f2ede7d837c2196897b16c0c73fa84865ce9ee565",
 };
 
 export const RPS_GAME_UID =
@@ -45,7 +52,9 @@ BigInt.prototype.toJSON = function () {
   return this.toString();
 };
 
-export function dbFriendlyAttestation(attestation: AttestationShareablePackageObject): Attestation {
+export function dbFriendlyAttestation(
+  attestation: AttestationShareablePackageObject
+): Attestation {
   return {
     uid: attestation.sig.uid,
     isOffchain: true,
@@ -55,15 +64,21 @@ export function dbFriendlyAttestation(attestation: AttestationShareablePackageOb
     refUID: attestation.sig.message.refUID,
     schemaId: attestation.sig.message.schema,
     signature: JSON.stringify(attestation.sig.signature),
-    gameUID: attestation.sig.message.schema === CUSTOM_SCHEMAS.CREATE_GAME_CHALLENGE ? attestation.sig.uid : attestation.sig.message.refUID,
+    gameUID:
+      attestation.sig.message.schema === CUSTOM_SCHEMAS.CREATE_GAME_CHALLENGE
+        ? attestation.sig.uid
+        : attestation.sig.message.refUID,
     onChainTimestamp: 0,
     packageObjString: JSON.stringify(attestation),
     timestamp: dayjs().unix(),
-  }
+  };
 }
 
-
-function calculateEloScore(player1Elo: number, player2Elo: number, result: number): [number, number] {
+function calculateEloScore(
+  player1Elo: number,
+  player2Elo: number,
+  result: number
+): [number, number] {
   const K = 32; // The maximum points that can be gained or lost
   const R1 = Math.pow(10, player1Elo / 400);
   const R2 = Math.pow(10, player2Elo / 400);
@@ -106,51 +121,67 @@ export function getGameStatus(game: Game) {
   return (3 + game.choice1 - game.choice2) % 3;
 }
 
-export async function updateEloChangeIfApplicable(game: GameWithPlayers, graph: UndirectedGraph): Promise<[number, number, boolean]> {
+export async function updateEloChangeIfApplicable(
+  game: GameWithPlayers,
+  graph: UndirectedGraph
+): Promise<[number, number, boolean]> {
   const elo1 = game.player1Object.elo;
   const elo2 = game.player2Object.elo;
   const gameStatus = getGameStatus(game);
   if (gameStatus === STATUS_UNKNOWN) return [0, 0, false];
-  const player1Verified = graph.getNodeAttributes(game.player1Object.address).badges &&
+  const player1Verified =
+    graph.getNodeAttributes(game.player1Object.address).badges &&
     graph.getNodeAttributes(game.player1Object.address).badges.length > 0;
-  const player2Verified = graph.getNodeAttributes(game.player2Object.address).badges &&
+  const player2Verified =
+    graph.getNodeAttributes(game.player2Object.address).badges &&
     graph.getNodeAttributes(game.player2Object.address).badges.length > 0;
   const bothVerified = player1Verified && player2Verified;
 
-  const [newElo1, newElo2] = bothVerified ?
-    calculateEloScore(elo1, elo2, gameStatus) : [elo1, elo2];
+  const [newElo1, newElo2] = bothVerified
+    ? calculateEloScore(elo1, elo2, gameStatus)
+    : [elo1, elo2];
 
   await updateNode(game.player1Object.address, newElo1, graph);
   await updateNode(game.player2Object.address, newElo2, graph);
 
-  return [newElo1 - elo1, newElo2 - elo2, true]
+  return [newElo1 - elo1, newElo2 - elo2, true];
 }
 
 export async function createPlayerIfDoesntExistAndReturnENS(address: string) {
   const player = await prisma.player.findUnique({
     where: {
       address: address,
-    }
+    },
   });
 
-  const ens = await getENS(address);
+  // const ens = await getENS(address);
+  console.log("test", typeof address);
 
   if (!player) {
     await prisma.player.create({
       data: {
         address: address,
-        ensName: ens.name,
-        ensAvatar: ens.avatar,
-      }
+        ensName: "",
+        ensAvatar: "",
+      },
     });
   }
 
-  return ens;
+  return {
+    address: address,
+    name: "",
+    avatar: "",
+  };
 }
 
-
-export function insertToLeaderboard(currList: LeaderboardPlayer[], newPlayer: LeaderboardPlayer, numPlayers: number) {
-  const idxToInsertAt = currList.findIndex((player) => player.elo < newPlayer.elo);
+export function insertToLeaderboard(
+  currList: LeaderboardPlayer[],
+  newPlayer: LeaderboardPlayer,
+  numPlayers: number
+) {
+  const idxToInsertAt = currList.findIndex(
+    (player) => player.elo < newPlayer.elo
+  );
   if (idxToInsertAt === -1) {
     if (currList.length < numPlayers) {
       currList.push(newPlayer);
@@ -163,26 +194,36 @@ export function insertToLeaderboard(currList: LeaderboardPlayer[], newPlayer: Le
   }
 }
 
-
-export async function signGameFinalization(game: GameWithPlayersAndAttestations, abandoned: boolean) {
+export async function signGameFinalization(
+  game: GameWithPlayersAndAttestations,
+  abandoned: boolean
+) {
   const eas = new EAS(CURRENT_CONFIG.contractAddress);
-// Signer must be an ethers-like signer.
-  const provider = new ethers.JsonRpcProvider("https://ethereum-rpc.publicnode.com");
+  // Signer must be an ethers-like signer.
+  const provider = new ethers.JsonRpcProvider(
+    "https://rpc.degen.tips"
+    // "https://ethereum-rpc.publicnode.com"
+  );
 
   const signer = new ethers.Wallet(process.env.PRIVATE_KEY!, provider);
 
   eas.connect(signer);
-// Initialize SchemaEncoder with the schema string
-  const schemaEncoder = new SchemaEncoder("bytes32[] relevantAttestations,bytes32 salt1,bytes32 salt2,uint8 choice1,uint8 choice2,bool abandoned");
+  // Initialize SchemaEncoder with the schema string
+  const schemaEncoder = new SchemaEncoder(
+    "bytes32[] relevantAttestations,bytes32 salt1,bytes32 salt2,uint8 choice1,uint8 choice2,bool abandoned"
+  );
   const encodedData = schemaEncoder.encodeData([
-    {name: "relevantAttestations", value: game.relevantAttestations.map(att => att.uid), type: "bytes32[]"},
-    {name: "salt1", value: game.salt1, type: "bytes32"},
-    {name: "salt2", value: game.salt2, type: "bytes32"},
-    {name: "choice1", value: game.choice1, type: "uint8"},
-    {name: "choice2", value: game.choice2, type: "uint8"},
-    {name: "abandoned", value: abandoned, type: "bool"}
+    {
+      name: "relevantAttestations",
+      value: game.relevantAttestations.map((att) => att.uid),
+      type: "bytes32[]",
+    },
+    { name: "salt1", value: game.salt1, type: "bytes32" },
+    { name: "salt2", value: game.salt2, type: "bytes32" },
+    { name: "choice1", value: game.choice1, type: "uint8" },
+    { name: "choice2", value: game.choice2, type: "uint8" },
+    { name: "abandoned", value: abandoned, type: "bool" },
   ]);
-
 
   const offchain = await eas.getOffchain();
 
@@ -196,7 +237,7 @@ export async function signGameFinalization(game: GameWithPlayersAndAttestations,
       revocable: false,
       expirationTime: BigInt(0),
     },
-    signer,
+    signer
   );
 
   const pkg: AttestationShareablePackageObject = {
@@ -214,30 +255,26 @@ export async function concludeAbandonedGames(graph: UndirectedGraph) {
     where: {
       AND: [
         {
-          OR: [
-            {choice1: CHOICE_UNKNOWN},
-            {choice2: CHOICE_UNKNOWN}
-          ]
+          OR: [{ choice1: CHOICE_UNKNOWN }, { choice2: CHOICE_UNKNOWN }],
         },
-        {NOT: {commit1: ZERO_BYTES32}},
-        {NOT: {commit2: ZERO_BYTES32}},
-        {NOT: {choice1: CHOICE_UNKNOWN, choice2: CHOICE_UNKNOWN}},
+        { NOT: { commit1: ZERO_BYTES32 } },
+        { NOT: { commit2: ZERO_BYTES32 } },
+        { NOT: { choice1: CHOICE_UNKNOWN, choice2: CHOICE_UNKNOWN } },
         {
-          updatedAt: {lt: dayjs().unix() - timePerMove}
-        }
-      ]
+          updatedAt: { lt: dayjs().unix() - timePerMove },
+        },
+      ],
     },
     include: {
       player1Object: true,
       player2Object: true,
       relevantAttestations: {
         select: {
-          uid: true
-        }
-      }
-    }
+          uid: true,
+        },
+      },
+    },
   });
-
 
   for (let game of abandonedGames) {
     const player1Abandoned = game.choice1 === CHOICE_UNKNOWN;
@@ -247,18 +284,19 @@ export async function concludeAbandonedGames(graph: UndirectedGraph) {
       game.choice2 = (game.choice1 + 2) % 3; // Give player 2 the losing choice
     }
 
-    const [eloChange1, eloChange2, finalized] = await updateEloChangeIfApplicable(game, graph);
+    const [eloChange1, eloChange2, finalized] =
+      await updateEloChangeIfApplicable(game, graph);
 
     if (finalized) {
       const finalizationAttestation = await signGameFinalization(game, true);
       await prisma.attestation.create({
         data: dbFriendlyAttestation(finalizationAttestation),
-      })
+      });
     }
 
     await prisma.game.update({
       where: {
-        uid: game.uid
+        uid: game.uid,
       },
       data: {
         choice1: game.choice1,
@@ -269,8 +307,8 @@ export async function concludeAbandonedGames(graph: UndirectedGraph) {
         eloChange2: eloChange2,
         finalized: finalized,
         updatedAt: dayjs().unix(),
-      }
-    })
+      },
+    });
   }
 }
 
@@ -278,34 +316,33 @@ export async function invalidateAbandonedGames() {
   const abandonedGames = await prisma.game.findMany({
     where: {
       AND: [
-        {choice1: CHOICE_UNKNOWN, choice2: CHOICE_UNKNOWN},
+        { choice1: CHOICE_UNKNOWN, choice2: CHOICE_UNKNOWN },
         {
-          updatedAt: {lt: dayjs().unix() - timePerMove}
+          updatedAt: { lt: dayjs().unix() - timePerMove },
         },
-        {invalidated: false}
-      ]
+        { invalidated: false },
+      ],
     },
     include: {
       player1Object: true,
       player2Object: true,
       relevantAttestations: {
         select: {
-          uid: true
-        }
-      }
-    }
+          uid: true,
+        },
+      },
+    },
   });
 
   for (let game of abandonedGames) {
     const finalizationAttestation = await signGameFinalization(game, true);
     await prisma.attestation.create({
       data: dbFriendlyAttestation(finalizationAttestation),
-    })
-
+    });
 
     await prisma.game.update({
       where: {
-        uid: game.uid
+        uid: game.uid,
       },
       data: {
         choice1: game.choice1,
@@ -314,8 +351,8 @@ export async function invalidateAbandonedGames() {
         salt2: game.salt2,
         finalized: true,
         updatedAt: dayjs().unix(),
-        invalidated: true
-      }
+        invalidated: true,
+      },
     });
   }
 }
@@ -324,130 +361,173 @@ type AuthorizedSchema = {
   name: string;
   attestors: string[];
   schemaId: string;
-}
-
-export const addresses = {
-  coinbase: '0x357458739F90461b99789350868CD7CF330Dd7EE',
-  steve: '0x0fb166cDdF1387C5b63fFa25721299fD7b068f3f',
-  bryce: '0x3e95B8E249c4536FE1db2E4ce5476010767C0A05',
-  jacob: '0xD04d9F44244929205cC4d1D9F21c96205DfD272B',
 };
 
-type Chain = 'base' | 'mainnet';
+export const addresses = {
+  coinbase: "0x357458739F90461b99789350868CD7CF330Dd7EE",
+  steve: "0x0fb166cDdF1387C5b63fFa25721299fD7b068f3f",
+  bryce: "0x3e95B8E249c4536FE1db2E4ce5476010767C0A05",
+  jacob: "0xD04d9F44244929205cC4d1D9F21c96205DfD272B",
+};
+
+type Chain = "base" | "degen" | "mainnet";
 export const AUTHORIZED_SCHEMAS = {
-  base: [{
-    name: 'Coinbase Verification',
-    attestors: [addresses.coinbase],
-    schemaId: "0xf8b05c79f090979bf4a80270aba232dff11a10d9ca55c4f88de95317970f0de9"
-  }],
-  mainnet: [{
-    name: 'EAS Met IRL',
-    attestors: [addresses.steve, addresses.bryce, addresses.jacob],
-    schemaId: "0xc59265615401143689cbfe73046a922c975c99d97e4c248070435b1104b2dea7"
-  }]
-}
+  base: [
+    {
+      name: "Coinbase Verification",
+      attestors: [addresses.coinbase],
+      schemaId:
+        "0xf8b05c79f090979bf4a80270aba232dff11a10d9ca55c4f88de95317970f0de9",
+    },
+  ],
+  degen: [
+    {
+      name: "EAS Met IRL",
+      attestors: [addresses.steve, addresses.bryce, addresses.jacob],
+      schemaId:
+        "0xc59265615401143689cbfe73046a922c975c99d97e4c248070435b1104b2dea7",
+    },
+  ],
+  mainnet: [
+    {
+      name: "EAS Met IRL",
+      attestors: [addresses.steve, addresses.bryce, addresses.jacob],
+      schemaId:
+        "0xc59265615401143689cbfe73046a922c975c99d97e4c248070435b1104b2dea7",
+    },
+  ],
+};
 
 type AttestationResponse = {
   decodedDataJson: string;
   id: string;
   isOffchain: boolean;
-}
+};
 
 const CHAIN_ENDPOINTS = {
   base: "https://base.easscan.org/graphql",
-  mainnet: "https://easscan.org/graphql"
-}
+  degen: "https://explorer.degen.tips/graphiql",
+  mainnet: "https://easscan.org/graphql",
+};
 
-export async function getAttestations(address: string, chain: Chain, timestamp: number) {
+export async function getAttestations(
+  address: string,
+  chain: Chain,
+  timestamp: number
+) {
   try {
     // Get all attestations for this schema from graphql since last timestamp
     const response = await axios.post(
       CHAIN_ENDPOINTS[chain],
       {
-        'query': 'query Query($where: AttestationWhereInput) {\n  attestations(where: $where) {\n    decodedDataJson\n    id\n    isOffchain\n  }\n}\n',
-        'variables': {
-          'where': {
-            'OR': AUTHORIZED_SCHEMAS[chain].map((schema: AuthorizedSchema) => ({
-              'attester': {
-                'in': schema.attestors
+        query:
+          "query Query($where: AttestationWhereInput) {\n  attestations(where: $where) {\n    decodedDataJson\n    id\n    isOffchain\n  }\n}\n",
+        variables: {
+          where: {
+            OR: AUTHORIZED_SCHEMAS[chain].map((schema: AuthorizedSchema) => ({
+              attester: {
+                in: schema.attestors,
               },
-              'schemaId': {
-                'equals': schema.schemaId
-              }
+              schemaId: {
+                equals: schema.schemaId,
+              },
             })),
-            'recipient': {
-              'equals': address
+            recipient: {
+              equals: address,
             },
-            'time': {
-              'gt': timestamp
-            }
-          }
+            time: {
+              gt: timestamp,
+            },
+          },
         },
-        'operationName': 'Query'
+        operationName: "Query",
       },
       {
         headers: {
-          'Accept': '*/*',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Connection': 'keep-alive',
-          'Origin': 'https://studio.apollographql.com',
-          'Referer': 'https://studio.apollographql.com/sandbox/explorer',
-          'Sec-Fetch-Dest': 'empty',
-          'Sec-Fetch-Mode': 'cors',
-          'Sec-Fetch-Site': 'cross-site',
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-          'content-type': 'application/json',
-          'sec-ch-ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-          'sec-ch-ua-mobile': '?0',
-          'sec-ch-ua-platform': '"macOS"'
-        }
+          Accept: "*/*",
+          "Accept-Language": "en-US,en;q=0.9",
+          Connection: "keep-alive",
+          Origin: "https://studio.apollographql.com",
+          Referer: "https://studio.apollographql.com/sandbox/explorer",
+          "Sec-Fetch-Dest": "empty",
+          "Sec-Fetch-Mode": "cors",
+          "Sec-Fetch-Site": "cross-site",
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+          "content-type": "application/json",
+          "sec-ch-ua":
+            '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+          "sec-ch-ua-mobile": "?0",
+          "sec-ch-ua-platform": '"macOS"',
+        },
       }
     );
 
-    return response.data.data.attestations.map((attestation: AttestationResponse) => ({...attestation, chain}));
+    return response.data.data.attestations.map(
+      (attestation: AttestationResponse) => ({ ...attestation, chain })
+    );
   } catch {
-    return []
+    return [];
   }
 }
 
-export async function checkForNewVerifications(address: string, g: UndirectedGraph) {
+export async function checkForNewVerifications(
+  address: string,
+  g: UndirectedGraph
+) {
   const player = await prisma.player.findUnique({
     select: {
       whiteListTimestamp: true,
-      whiteListAttestations: true
+      whiteListAttestations: true,
     },
     where: {
-      address: address
-    }
+      address: address,
+    },
   });
 
-
-  const attestations = [...await getAttestations(address, 'base', player?.whiteListTimestamp || 0),
-    ...await getAttestations(address, 'mainnet', player?.whiteListTimestamp || 0)];
-
+  const attestations = [
+    ...(await getAttestations(
+      address,
+      "base",
+      player?.whiteListTimestamp || 0
+    )),
+    ...(await getAttestations(
+      address,
+      "degen",
+      player?.whiteListTimestamp || 0
+    )),
+    ...(await getAttestations(
+      address,
+      "mainnet",
+      player?.whiteListTimestamp || 0
+    )),
+  ];
 
   const ens = await createPlayerIfDoesntExistAndReturnENS(address);
 
   if (!player) {
     g.mergeNode(address, {
       elo: 0,
-      ensName: ens.name,
-      ensAvatar: ens.avatar,
-      badges: []
+      ensName: address,
+      ensAvatar: "",
+      badges: [],
     });
   } else {
-    g.setNodeAttribute(address, 'ensName', ens.name);
-    g.setNodeAttribute(address, 'ensAvatar', ens.avatar);
+    g.setNodeAttribute(address, "ensName", ens.name);
+    g.setNodeAttribute(address, "ensAvatar", ens.avatar);
   }
 
-  if (attestations.length && (!player || !player.whiteListAttestations.length)) {
-    g.setNodeAttribute(address, 'elo', 1000);
+  if (
+    attestations.length &&
+    (!player || !player.whiteListAttestations.length)
+  ) {
+    g.setNodeAttribute(address, "elo", 1000);
   }
 
   for (const attestation of attestations) {
     //generate a new WhitelistAttestation in the db
     try {
-      const badgeType = attestation.chain === 'base' ? "Coinbase" : "MetIRL"
+      const badgeType = attestation.chain === "base" ? "Coinbase" : "MetIRL";
       await prisma.whitelistAttestation.create({
         data: {
           type: badgeType,
@@ -456,25 +536,28 @@ export async function checkForNewVerifications(address: string, g: UndirectedGra
           chain: attestation.chain,
           isOffchain: attestation.isOffchain,
           recipient: address,
-        }
+        },
       });
 
-      g.setNodeAttribute(address, 'badges', [...g.getNodeAttribute(address, "badges"), badgeType])
+      g.setNodeAttribute(address, "badges", [
+        ...g.getNodeAttribute(address, "badges"),
+        badgeType,
+      ]);
     } catch (e) {
-      console.log(e)
+      console.log(e);
     }
   }
 
   await prisma.player.update({
     where: {
-      address: address
+      address: address,
     },
     data: {
       whiteListTimestamp: dayjs().unix(),
       elo: g.getNodeAttribute(address, "elo"),
       ensName: g.getNodeAttribute(address, "ensName"),
       ensAvatar: g.getNodeAttribute(address, "ensAvatar"),
-    }
+    },
   });
 }
 
@@ -488,13 +571,13 @@ export async function getENS(address: string) {
       }
     );
     const name = await provider.lookupAddress(address);
-    if (!name) return {avatar: null, name: null};
+    if (!name) return { avatar: null, name: null };
 
     const avt = new AvatarResolver(provider);
     const avatar = await avt.getAvatar(name, {});
-    return {avatar, name};
+    return { avatar, name };
   } catch (e) {
-    console.log(e)
-    return {avatar: null, name: null};
+    console.log(e);
+    return { avatar: null, name: null };
   }
 }
