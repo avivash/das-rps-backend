@@ -1,15 +1,17 @@
-import express from 'express'
-import cors from 'cors'
+import express from "express";
+import cors from "cors";
 import bodyParser from "body-parser";
-import {StoreIPFSActionReturn, LeaderboardPlayer} from "./types";
-import verificationMiddleware from './verifyAttestation'
+import { StoreIPFSActionReturn, LeaderboardPlayer } from "./types";
+import verificationMiddleware from "./verifyAttestation";
 import {
-  SchemaEncoder, AttestationShareablePackageObject, ZERO_BYTES32
+  SchemaEncoder,
+  AttestationShareablePackageObject,
+  ZERO_BYTES32,
 } from "@ethereum-attestation-service/eas-sdk";
 import dayjs from "dayjs";
-import {PrismaClient} from "@prisma/client";
-import {UndirectedGraph} from "graphology";
-import {subgraph} from "graphology-operators";
+import { PrismaClient } from "@prisma/client";
+import { UndirectedGraph } from "graphology";
+import { subgraph } from "graphology-operators";
 import {
   updateEloChangeIfApplicable,
   CHOICE_UNKNOWN,
@@ -20,35 +22,55 @@ import {
   STATUS_PLAYER1_WIN,
   STATUS_PLAYER2_WIN,
   insertToLeaderboard,
-  signGameFinalization, checkForNewVerifications
+  signGameFinalization,
+  checkForNewVerifications,
 } from "./utils";
-import {ethers} from 'ethers';
-import {loadGraph, addLink} from "./graph";
-import {bfsFromNode} from "graphology-traversal";
-import {runCron} from "./cron";
+import { ethers } from "ethers";
+import { loadGraph, addLink } from "./graph";
+import { bfsFromNode } from "graphology-traversal";
+import { runCron } from "./cron";
 
 const prisma = new PrismaClient();
 const graph = new UndirectedGraph();
 
-const app = express()
-const port = 8080
+const app = express();
+const port = 8080;
 
-app.use(bodyParser.urlencoded({extended: true}));
+app.use(bodyParser.urlencoded({ extended: true }));
 
 app.use(bodyParser.json());
-app.use(cors())
+app.use(cors());
 
-app.get('/ok', (req, res) => {
-  res.send('ok')
-})
+app.use(function (req, res, next) {
+  if (req.hostname.endsWith("onrender.com")) {
+    res.setHeader("Access-Control-Allow-Origin", "http://" + req.hostname);
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "X-Requested-With,Content-Type"
+    );
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET, POST, OPTIONS, PUT, DELETE"
+    );
+  }
+  next();
+});
 
-app.post('/newAttestation', verificationMiddleware, async (req, res) => {
-  const attestation: AttestationShareablePackageObject = JSON.parse(req.body.textJson)
+app.get("/ok", (req, res) => {
+  res.send("ok");
+});
+
+app.post("/newAttestation", verificationMiddleware, async (req, res) => {
+  const attestation: AttestationShareablePackageObject = JSON.parse(
+    req.body.textJson
+  );
 
   try {
-    if (attestation.sig.message.schema === CUSTOM_SCHEMAS.CREATE_GAME_CHALLENGE) {
+    if (
+      attestation.sig.message.schema === CUSTOM_SCHEMAS.CREATE_GAME_CHALLENGE
+    ) {
       if (attestation.sig.message.refUID !== RPS_GAME_UID) {
-        return
+        return;
       }
 
       const numActiveGames = await prisma.game.count({
@@ -61,27 +83,32 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
             {
               player1: attestation.sig.message.recipient,
               player2: attestation.signer,
-            }
+            },
           ],
           declined: false,
           finalized: false,
           invalidated: false,
-          abandoned: false
-        }
+          abandoned: false,
+        },
       });
 
       if (numActiveGames >= 5) {
-        res.json({error: 'You have too many active games with this player. Finish some before starting new ones.'})
-        return
+        res.json({
+          error:
+            "You have too many active games with this player. Finish some before starting new ones.",
+        });
+        return;
       }
 
       const schemaEncoder = new SchemaEncoder("string stakes");
-      const stakes = (schemaEncoder.decodeData(attestation.sig.message.data))[0].value.value.toString();
+      const stakes = schemaEncoder
+        .decodeData(attestation.sig.message.data)[0]
+        .value.value.toString();
 
-      const player1 = attestation.signer
-      const player2 = attestation.sig.message.recipient
+      const player1 = attestation.signer;
+      const player2 = attestation.sig.message.recipient;
       if (player1 === player2) {
-        return
+        return;
       }
 
       await addLink(player1, player2, graph);
@@ -91,13 +118,13 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
           uid: attestation.sig.uid,
           player1Object: {
             connect: {
-              address: player1
-            }
+              address: player1,
+            },
           },
           player2Object: {
             connect: {
-              address: player2
-            }
+              address: player2,
+            },
           },
           commit1: ZERO_BYTES32,
           commit2: ZERO_BYTES32,
@@ -112,16 +139,17 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
               player1_player2: {
                 player1: player1,
                 player2: player2,
-              }
-            }
-          }
-        }
-      })
-
+              },
+            },
+          },
+        },
+      });
     } else if (attestation.sig.message.schema === CUSTOM_SCHEMAS.COMMIT_HASH) {
-      const schemaEncoder = new SchemaEncoder("bytes32 commitHash,bytes encryptedChoice");
+      const schemaEncoder = new SchemaEncoder(
+        "bytes32 commitHash,bytes encryptedChoice"
+      );
 
-      const decoded = schemaEncoder.decodeData(attestation.sig.message.data)
+      const decoded = schemaEncoder.decodeData(attestation.sig.message.data);
       const commitHash = decoded[0].value.value.toString();
       const encryptedChoice = decoded[1].value.value.toString();
       const gameID = attestation.sig.message.refUID;
@@ -132,12 +160,12 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
           player2: true,
         },
         where: {
-          uid: gameID
-        }
-      })
+          uid: gameID,
+        },
+      });
 
       if (!players) {
-        return
+        return;
       }
 
       if (attestation.signer === players.player1) {
@@ -149,9 +177,9 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
           data: {
             commit1: commitHash,
             updatedAt: dayjs().unix(),
-            encryptedChoice1: encryptedChoice
-          }
-        })
+            encryptedChoice1: encryptedChoice,
+          },
+        });
       } else if (attestation.signer === players.player2) {
         await prisma.game.update({
           where: {
@@ -161,11 +189,13 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
           data: {
             commit2: commitHash,
             updatedAt: dayjs().unix(),
-            encryptedChoice2: encryptedChoice
-          }
-        })
+            encryptedChoice2: encryptedChoice,
+          },
+        });
       }
-    } else if (attestation.sig.message.schema === CUSTOM_SCHEMAS.DECLINE_GAME_CHALLENGE) {
+    } else if (
+      attestation.sig.message.schema === CUSTOM_SCHEMAS.DECLINE_GAME_CHALLENGE
+    ) {
       const gameID = attestation.sig.message.refUID;
 
       const players = await prisma.game.findUnique({
@@ -175,11 +205,11 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
         where: {
           uid: gameID,
           commit2: ZERO_BYTES32,
-        }
-      })
+        },
+      });
 
       if (!players) {
-        return
+        return;
       }
 
       if (attestation.signer === players.player2) {
@@ -190,77 +220,77 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
           data: {
             declined: true,
             updatedAt: dayjs().unix(),
-          }
-        })
+          },
+        });
       }
     }
 
     await prisma.attestation.create({
       data: dbFriendlyAttestation(attestation),
-    })
+    });
 
     const result: StoreIPFSActionReturn = {
       error: null,
       ipfsHash: null,
-      offchainAttestationId: attestation.sig.uid
-    }
-    res.json(result)
+      offchainAttestationId: attestation.sig.uid,
+    };
+    res.json(result);
   } catch (e) {
-    res.json({error: `Your attestation was verified, but not indexed. ${e}`})
+    res.json({ error: `Your attestation was verified, but not indexed. ${e}` });
   }
-})
+});
 
-app.post('/gameStatus', async (req, res) => {
-  const {uid} = req.body
+app.post("/gameStatus", async (req, res) => {
+  const { uid } = req.body;
 
   let game = await prisma.game.findUnique({
     where: {
-      uid: uid
+      uid: uid,
     },
     include: {
       relevantAttestations: {
         select: {
           timestamp: true,
           packageObjString: true,
-        }
+        },
       },
       player1Object: {
         include: {
           whiteListAttestations: {
             select: {
               type: true,
-            }
+            },
           },
-        }
+        },
       },
       player2Object: {
         include: {
           whiteListAttestations: {
             select: {
               type: true,
-            }
+            },
           },
-        }
+        },
       },
-    }
-  })
+    },
+  });
 
-  res.json(game)
-})
+  res.json(game);
+});
 
 const finalizedGamesFilter = {
   gamesPlayed: {
     where: {
-      finalized: true
-    }
+      finalized: true,
+    },
   },
-}
+};
 
-app.post('/incomingChallenges', async (req, res) => {
-  const {address} = req.body
+app.post("/incomingChallenges", async (req, res) => {
+  const { address } = req.body;
 
-  if (!(typeof address === 'string')) {
-    return
+  if (!(typeof address === "string")) {
+    return;
   }
 
   const challenges = await prisma.game.findMany({
@@ -276,22 +306,22 @@ app.post('/incomingChallenges', async (req, res) => {
           ...finalizedGamesFilter,
           opposite: {
             include: finalizedGamesFilter,
-          }
-        }
+          },
+        },
       },
       player1Object: {
         include: {
           whiteListAttestations: {
             select: {
               type: true,
-            }
+            },
           },
-        }
+        },
       },
     },
     orderBy: {
-      updatedAt: 'desc'
-    }
+      updatedAt: "desc",
+    },
   });
 
   let winStreaks: number[] = [];
@@ -299,7 +329,9 @@ app.post('/incomingChallenges', async (req, res) => {
 
   for (const challenge of challenges) {
     // Get list of games sorted by updatedAt
-    const games = challenge.link.gamesPlayed.concat(challenge.link.opposite.gamesPlayed).sort((a, b) => b.updatedAt - a.updatedAt);
+    const games = challenge.link.gamesPlayed
+      .concat(challenge.link.opposite.gamesPlayed)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
     gameCounts.push(games.length);
     if (games.length === 0) {
       winStreaks.push(0);
@@ -308,29 +340,38 @@ app.post('/incomingChallenges', async (req, res) => {
     let currIdx = 0;
     let winStreak = 0;
 
-    while (currIdx < games.length && (
-      (getGameStatus(games[currIdx]) === STATUS_PLAYER1_WIN && address === games[currIdx].player1) ||
-      (getGameStatus(games[currIdx]) === STATUS_PLAYER2_WIN && address === games[currIdx].player2)
-    )) {
+    while (
+      currIdx < games.length &&
+      ((getGameStatus(games[currIdx]) === STATUS_PLAYER1_WIN &&
+        address === games[currIdx].player1) ||
+        (getGameStatus(games[currIdx]) === STATUS_PLAYER2_WIN &&
+          address === games[currIdx].player2))
+    ) {
       winStreak++;
       currIdx++;
     }
     winStreaks.push(winStreak);
   }
 
-  res.json(challenges.map((challenge, idx) => ({
-    uid: challenge.uid,
-    player1Object: challenge.player1Object,
-    stakes: challenge.stakes,
-    winstreak: winStreaks[idx],
-    gameCount: gameCounts[idx],
-  })).sort((a, b) =>
-    b.player1Object.whiteListAttestations.length - a.player1Object.whiteListAttestations.length));
-})
+  res.json(
+    challenges
+      .map((challenge, idx) => ({
+        uid: challenge.uid,
+        player1Object: challenge.player1Object,
+        stakes: challenge.stakes,
+        winstreak: winStreaks[idx],
+        gameCount: gameCounts[idx],
+      }))
+      .sort(
+        (a, b) =>
+          b.player1Object.whiteListAttestations.length -
+          a.player1Object.whiteListAttestations.length
+      )
+  );
+});
 
-
-app.post('/gamesPendingReveal', async (req, res) => {
-  const {address} = req.body
+app.post("/gamesPendingReveal", async (req, res) => {
+  const { address } = req.body;
 
   const games = await prisma.game.findMany({
     select: {
@@ -342,43 +383,46 @@ app.post('/gamesPendingReveal', async (req, res) => {
     },
     where: {
       commit1: {
-        not: ZERO_BYTES32
+        not: ZERO_BYTES32,
       },
       commit2: {
-        not: ZERO_BYTES32
+        not: ZERO_BYTES32,
       },
       invalidated: false,
       declined: false,
       OR: [
         {
           player1: address,
-          choice1: CHOICE_UNKNOWN
+          choice1: CHOICE_UNKNOWN,
         },
         {
           player2: address,
-          choice2: CHOICE_UNKNOWN
-        }
-      ]
+          choice2: CHOICE_UNKNOWN,
+        },
+      ],
     },
   });
 
-  res.json(games.map(game => ({
-    uid: game.uid,
-    encryptedChoice: game.player1 === address ?
-      game.encryptedChoice1 : game.encryptedChoice2
-  })))
-})
-
+  res.json(
+    games.map((game) => ({
+      uid: game.uid,
+      encryptedChoice:
+        game.player1 === address
+          ? game.encryptedChoice1
+          : game.encryptedChoice2,
+    }))
+  );
+});
 
 let revealForbidden = new Map<string, boolean>();
-app.post('/revealMany', async (req, res) => {
-  type Reveal = { uid: string, choice: number, salt: string }
-  const {reveals}: { reveals: Reveal[] } = req.body
+app.post("/revealMany", async (req, res) => {
+  type Reveal = { uid: string; choice: number; salt: string };
+  const { reveals }: { reveals: Reveal[] } = req.body;
   try {
     for (const reveal of reveals) {
-      const {uid, choice, salt} = reveal
+      const { uid, choice, salt } = reveal;
       if (!uid || (!choice && choice !== 0) || !salt) {
-        return
+        return;
       }
 
       let game = await prisma.game.findUnique({
@@ -394,13 +438,13 @@ app.post('/revealMany', async (req, res) => {
           relevantAttestations: {
             select: {
               uid: true,
-            }
-          }
-        }
-      })
+            },
+          },
+        },
+      });
 
       if (!game) {
-        continue
+        continue;
       }
 
       const hashedChoice = ethers.solidityPackedKeccak256(
@@ -409,8 +453,8 @@ app.post('/revealMany', async (req, res) => {
       );
 
       if (hashedChoice === game.commit1) {
-        game.choice1 = choice
-        game.salt1 = salt
+        game.choice1 = choice;
+        game.salt1 = salt;
 
         if (revealForbidden.get(`${uid}1`)) {
           continue;
@@ -418,8 +462,8 @@ app.post('/revealMany', async (req, res) => {
           revealForbidden.set(`${uid}1`, true);
         }
       } else if (hashedChoice === game.commit2) {
-        game.choice2 = choice
-        game.salt2 = salt
+        game.choice2 = choice;
+        game.salt2 = salt;
 
         if (revealForbidden.get(`${uid}2`)) {
           continue;
@@ -431,18 +475,22 @@ app.post('/revealMany', async (req, res) => {
       }
 
       try {
-        const [eloChange1, eloChange2, finalized] = await updateEloChangeIfApplicable(game, graph);
+        const [eloChange1, eloChange2, finalized] =
+          await updateEloChangeIfApplicable(game, graph);
 
         if (finalized) {
-          const finalizationAttestation = await signGameFinalization(game, false);
+          const finalizationAttestation = await signGameFinalization(
+            game,
+            false
+          );
           await prisma.attestation.create({
             data: dbFriendlyAttestation(finalizationAttestation),
-          })
+          });
         }
 
         await prisma.game.update({
           where: {
-            uid: reveal.uid
+            uid: reveal.uid,
           },
           data: {
             choice1: game.choice1,
@@ -453,33 +501,33 @@ app.post('/revealMany', async (req, res) => {
             eloChange2: eloChange2,
             finalized: finalized,
             updatedAt: dayjs().unix(),
-          }
-        })
+          },
+        });
       } catch (e) {
         if (hashedChoice === game.commit1) {
           revealForbidden.delete(`${uid}1`);
         } else if (hashedChoice === game.commit2) {
           revealForbidden.delete(`${uid}2`);
         }
-        console.log(e)
+        console.log(e);
       }
     }
   } catch (e) {
-    console.log(e)
+    console.log(e);
   }
 
-  res.json({})
-})
+  res.json({});
+});
 
-app.post('/myGames', async (req, res) => {
-  const {address, finalized} = req.body
-  if (!(typeof finalized === 'boolean') || !(typeof address === 'string')) {
-    return
+app.post("/myGames", async (req, res) => {
+  const { address, finalized } = req.body;
+  if (!(typeof finalized === "boolean") || !(typeof address === "string")) {
+    return;
   }
 
   const myStats = await prisma.player.findUnique({
     where: {
-      address: address
+      address: address,
     },
     include: {
       gamesPlayedAsPlayer1: {
@@ -493,11 +541,11 @@ app.post('/myGames', async (req, res) => {
               whiteListAttestations: {
                 select: {
                   type: true,
-                }
-              }
-            }
+                },
+              },
+            },
           },
-        }
+        },
       },
       gamesPlayedAsPlayer2: {
         where: {
@@ -510,47 +558,52 @@ app.post('/myGames', async (req, res) => {
               whiteListAttestations: {
                 select: {
                   type: true,
-                }
-              }
-            }
+                },
+              },
+            },
           },
-        }
+        },
       },
-    }
+    },
   });
 
   if (!myStats) {
-    return
+    return;
   }
 
-  const player1Games = myStats.gamesPlayedAsPlayer1.map(game => ({
+  const player1Games = myStats.gamesPlayedAsPlayer1.map((game) => ({
     ...game,
     player1Object: {
       ...game.player2Object,
-      badges: game.player2Object.whiteListAttestations.map(attestation => attestation.type)
+      badges: game.player2Object.whiteListAttestations.map(
+        (attestation) => attestation.type
+      ),
     },
-    player2Object: undefined
-  }))
-  const player2Games = myStats.gamesPlayedAsPlayer2.map(game => ({
+    player2Object: undefined,
+  }));
+  const player2Games = myStats.gamesPlayedAsPlayer2.map((game) => ({
     ...game,
     player1Object: {
       ...game.player1Object,
-      badges: game.player1Object.whiteListAttestations.map(attestation => attestation.type)
+      badges: game.player1Object.whiteListAttestations.map(
+        (attestation) => attestation.type
+      ),
     },
-    player2Object: undefined
-  }))
+    player2Object: undefined,
+  }));
 
-  const games = player1Games.concat(player2Games).sort((a, b) => b.updatedAt - a.updatedAt);
+  const games = player1Games
+    .concat(player2Games)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 
   res.json({
     games: games,
     elo: myStats.elo,
-    badges: graph.getNodeAttribute(address, 'badges'),
+    badges: graph.getNodeAttribute(address, "badges"),
     ensName: myStats.ensName,
-    ensAvatar: myStats.ensAvatar
+    ensAvatar: myStats.ensAvatar,
   });
 });
-
 
 const graphGameFilter = {
   select: {
@@ -562,28 +615,26 @@ const graphGameFilter = {
   },
   where: {
     declined: false,
-  }
+  },
 };
 
-
-app.post('/getGraph', async (req, res) => {
+app.post("/getGraph", async (req, res) => {
   const links = graph.edges().map((edge) => {
     // get destination of edge
-    return {source: graph.source(edge), target: graph.target(edge)}
-  })
-
+    return { source: graph.source(edge), target: graph.target(edge) };
+  });
 
   res.json({
-    nodes: graph.nodes().map((node) => ({id: node})),
-    links: links
-  })
-})
+    nodes: graph.nodes().map((node) => ({ id: node })),
+    links: links,
+  });
+});
 
-app.post('/getGamesBetweenPlayers', async (req, res) => {
-  const {player1, player2} = req.body
+app.post("/getGamesBetweenPlayers", async (req, res) => {
+  const { player1, player2 } = req.body;
 
-  if (typeof player1 !== 'string' || typeof player2 !== 'string') {
-    return
+  if (typeof player1 !== "string" || typeof player2 !== "string") {
+    return;
   }
 
   const link = await prisma.link.findUnique({
@@ -591,31 +642,35 @@ app.post('/getGamesBetweenPlayers', async (req, res) => {
       player1_player2: {
         player1: player1,
         player2: player2,
-      }
+      },
     },
     include: {
       gamesPlayed: graphGameFilter,
       opposite: {
         include: {
           gamesPlayed: graphGameFilter,
-        }
-      }
-    }
+        },
+      },
+    },
   });
 
   if (!link) return;
 
-  res.json(link.gamesPlayed.concat(link.opposite.gamesPlayed).sort((a, b) => b.updatedAt - a.updatedAt))
-})
+  res.json(
+    link.gamesPlayed
+      .concat(link.opposite.gamesPlayed)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+  );
+});
 
-app.post('/getElo', async (req, res) => {
-  const {address} = req.body
-  if (typeof address !== 'string' || !graph.hasNode(address)) {
-    return
+app.post("/getElo", async (req, res) => {
+  const { address } = req.body;
+  if (typeof address !== "string" || !graph.hasNode(address)) {
+    return;
   }
-  const player = graph.getNodeAttributes(address)
-  res.json(player)
-})
+  const player = graph.getNodeAttributes(address);
+  res.json(player);
+});
 
 const filterPlayerObject = {
   select: {
@@ -626,118 +681,132 @@ const filterPlayerObject = {
     whiteListAttestations: {
       select: {
         type: true,
-      }
-    }
-  }
-}
+      },
+    },
+  },
+};
 
-app.post('/ongoing', async (req, res) => {
-  const {address} = req.body
-  if (typeof address !== 'string') {
-    return
+app.post("/ongoing", async (req, res) => {
+  const { address } = req.body;
+  if (typeof address !== "string") {
+    return;
   }
   const games = await prisma.game.findMany({
     where: {
       OR: [
         {
           player1: address,
-          OR: [{
-            choice1: CHOICE_UNKNOWN
-          }, {
-            choice2: CHOICE_UNKNOWN
-          }]
+          OR: [
+            {
+              choice1: CHOICE_UNKNOWN,
+            },
+            {
+              choice2: CHOICE_UNKNOWN,
+            },
+          ],
         },
         {
           player2: address,
-          OR: [{
-            choice1: CHOICE_UNKNOWN
-          }, {
-            choice2: CHOICE_UNKNOWN
-          }],
+          OR: [
+            {
+              choice1: CHOICE_UNKNOWN,
+            },
+            {
+              choice2: CHOICE_UNKNOWN,
+            },
+          ],
           commit2: {
-            not: ZERO_BYTES32
-          }
-        }
+            not: ZERO_BYTES32,
+          },
+        },
       ],
       declined: false,
       invalidated: false,
       abandoned: false,
-      finalized: false
+      finalized: false,
     },
     include: {
       player1Object: filterPlayerObject,
       player2Object: filterPlayerObject,
-    }
+    },
   });
 
-  res.json(games)
-})
+  res.json(games);
+});
 
-app.post('/globalLeaderboard', async (req, res) => {
+app.post("/globalLeaderboard", async (req, res) => {
   const players = await prisma.player.findMany({
     orderBy: {
-      elo: 'desc'
+      elo: "desc",
     },
     include: {
       whiteListAttestations: {
         select: {
           type: true,
-        }
-      }
+        },
+      },
     },
-    take: 30
+    take: 30,
   });
 
-  res.json(players.map(player => ({
-    elo: player.elo,
-    address: player.address,
-    badges: player.whiteListAttestations.map(elem => elem.type),
-    ensName: player.ensName,
-    ensAvatar: player.ensAvatar
-  })))
-})
+  res.json(
+    players.map((player) => ({
+      elo: player.elo,
+      address: player.address,
+      badges: player.whiteListAttestations.map((elem) => elem.type),
+      ensName: player.ensName,
+      ensAvatar: player.ensAvatar,
+    }))
+  );
+});
 
-app.post('/localLeaderboard', async (req, res) => {
+app.post("/localLeaderboard", async (req, res) => {
   // bfs from address
-  const {address} = req.body
+  const { address } = req.body;
 
-  if (typeof address !== 'string' || !graph.hasNode(address)) {
-    res.json([])
-    return
+  if (typeof address !== "string" || !graph.hasNode(address)) {
+    res.json([]);
+    return;
   }
   let leaderboard: LeaderboardPlayer[] = [];
   bfsFromNode(graph, address, (node, attr, depth) => {
     if (depth > 2) {
       return true;
     } else {
-      insertToLeaderboard(leaderboard, {
-        address: node,
-        elo: attr.elo,
-        badges: attr.badges,
-        ensName: attr.ensName || null,
-        ensAvatar: attr.ensAvatar || null
-      }, 30);
+      insertToLeaderboard(
+        leaderboard,
+        {
+          address: node,
+          elo: attr.elo,
+          badges: attr.badges,
+          ensName: attr.ensName || null,
+          ensAvatar: attr.ensAvatar || null,
+        },
+        30
+      );
       return false;
     }
   });
 
-  res.json(leaderboard.map(elem => ({
-    elo: elem.elo,
-    address: elem.address,
-    badges: elem.badges || [],
-    ensName: elem.ensName,
-    ensAvatar: elem.ensAvatar
-  })))
-})
+  res.json(
+    leaderboard.map((elem) => ({
+      elo: elem.elo,
+      address: elem.address,
+      badges: elem.badges || [],
+      ensName: elem.ensName,
+      ensAvatar: elem.ensAvatar,
+    }))
+  );
+});
 
-app.post('/localGraph', async (req, res) => {
-  const {address} = req.body;
-  if (typeof address !== 'string' || !graph.hasNode(address)) {
+app.post("/localGraph", async (req, res) => {
+  const { address } = req.body;
+  if (typeof address !== "string" || !graph.hasNode(address)) {
     res.json({
       nodes: [],
-      links: []
-    })
-    return
+      links: [],
+    });
+    return;
   }
   let nodes: string[] = [];
   bfsFromNode(graph, address, (node, attr, depth) => {
@@ -753,32 +822,31 @@ app.post('/localGraph', async (req, res) => {
 
   const links = sg.edges().map((edge) => {
     // get destination of edge
-    return {source: graph.source(edge), target: sg.target(edge)}
+    return { source: graph.source(edge), target: sg.target(edge) };
   });
 
-
   res.json({
-    nodes: nodes.map((node) => ({id: node})),
-    links: links
-  })
-})
+    nodes: nodes.map((node) => ({ id: node })),
+    links: links,
+  });
+});
 
-app.post('/checkForBadges', async (req, res) => {
-  const {address} = req.body;
+app.post("/checkForBadges", async (req, res) => {
+  const { address } = req.body;
   await checkForNewVerifications(address, graph);
-  res.json({})
-})
+  res.json({});
+});
 
-const outerRoute = express()
-outerRoute.use('/api', app);
+const outerRoute = express();
+outerRoute.use("/api", app);
 
 async function listen() {
-  await loadGraph(graph)
+  await loadGraph(graph);
   outerRoute.listen(port, async () => {
-    console.log(`app listening on port ${port}`)
-  })
+    console.log(`app listening on port ${port}`);
+  });
 }
 
-listen()
+listen();
 
 runCron(graph);
