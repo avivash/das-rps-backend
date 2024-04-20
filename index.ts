@@ -42,17 +42,11 @@ app.use(bodyParser.json());
 
 app.use(
   cors({
-    origin: true,
-    optionsSuccessStatus: 200,
-    credentials: true,
-  })
-);
-
-app.options(
-  "*",
-  cors({
-    origin: true,
-    optionsSuccessStatus: 200,
+    origin: [
+      "http://localhost:3000",
+      "http://das-rps-backend.onrender.com",
+      "https://das-rps-backend.onrender.com",
+    ],
     credentials: true,
   })
 );
