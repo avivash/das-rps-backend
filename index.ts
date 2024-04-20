@@ -39,22 +39,11 @@ const port = 8080;
 app.use(bodyParser.urlencoded({ extended: true }));
 
 app.use(bodyParser.json());
-app.use(cors());
 
-app.use(function (req, res, next) {
-  if (req.hostname.endsWith("onrender.com")) {
-    res.setHeader("Access-Control-Allow-Origin", "http://" + req.hostname);
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "X-Requested-With,Content-Type"
-    );
-    res.setHeader(
-      "Access-Control-Allow-Methods",
-      "GET, POST, OPTIONS, PUT, DELETE"
-    );
-  }
-  next();
-});
+const corsOptions = {
+  origin: ["http://localhost:3000", "https://das-rps-frontend.onrender.com"],
+};
+app.use(cors(corsOptions));
 
 app.get("/ok", (req, res) => {
   res.send("ok");
