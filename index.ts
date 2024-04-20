@@ -40,16 +40,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 app.use(bodyParser.json());
 
-app.use(
-  cors({
-    origin: [
-      "http://localhost:3000",
-      "http://das-rps-frontend.onrender.com",
-      "https://das-rps-frontend.onrender.com",
-    ],
-    credentials: true,
-  })
-);
+app.use(cors());
 
 app.get("/ok", (req, res) => {
   res.send("ok");
